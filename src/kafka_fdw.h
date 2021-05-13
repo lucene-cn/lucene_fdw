@@ -264,6 +264,7 @@ typedef struct KafkaFdwModifyState
     StringInfoData       attname_buf;        /* buffer holding attribute names for json format */
     char **              attnames;           /* pointer into attname_buf */
 
+
     jclass jni_cls;
     jmethodID jni_mid;
     jobject jni_obj;   

@@ -1,4 +1,4 @@
-
+export PATH=/usr/local/pgsql/bin:/opt/software/jdk/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/root/bin
  make clean
   make 
   make install
