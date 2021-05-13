@@ -29,6 +29,23 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#ifdef WIN32
+#include <windows.h>
+#else
+#include <unistd.h> // linux下头文件
+#endif
+
+
+
+#include <jni.h>
+#define PATH_SEPARATOR ';' /* define it to be ':' on Solaris */
+#define USER_CLASSPATH "/opt/software/createJavaVM" /* where Prog.class is */
+#define FILE_MAX_SIZE (1024*1024)
+
 #if PG_VERSION_NUM >= 120000
 #include "access/table.h"
 #else
@@ -246,6 +263,10 @@ typedef struct KafkaFdwModifyState
     List *               partition_list;     /* integer list of partitions */
     StringInfoData       attname_buf;        /* buffer holding attribute names for json format */
     char **              attnames;           /* pointer into attname_buf */
+
+    jclass jni_cls;
+    jmethodID jni_mid;
+    jobject jni_obj;   
 
 } KafkaFdwModifyState;
 /* connection.c */

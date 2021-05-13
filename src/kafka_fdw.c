@@ -16,6 +16,95 @@ PG_MODULE_MAGIC;
 #define STEP_FACTOR 20
 
 double kafka_tuple_cost = 0.2f;
+char* Jstring2CStr(JNIEnv* env, jstring jstr) {
+	char* rtn = NULL;
+	jclass clsstring = (*env)->FindClass(env, "java/lang/String");
+	jstring strencode = (*env)->NewStringUTF(env, "utf-8");
+	jmethodID mid = (*env)->GetMethodID(env, clsstring, "getBytes",	"(Ljava/lang/String;)[B");
+	jbyteArray barr = (jbyteArray)(*env)->CallObjectMethod(env, jstr, mid,	strencode);
+	jsize alen = (*env)->GetArrayLength(env, barr);
+	jbyte* ba = (*env)->GetByteArrayElements(env, barr, JNI_FALSE);
+	if (alen > 0) {
+		rtn = (char*) malloc(alen + 1);
+		memcpy(rtn, ba, alen);
+		rtn[alen] = 0;
+	}
+	(*env)->ReleaseByteArrayElements(env, barr, ba, 0);
+	return rtn;
+}
+
+/*
+获得当前时间字符串
+@param buffer [out]: 时间字符串
+@return 空
+*/
+void get_local_time(char* buffer)
+{
+time_t rawtime;
+struct tm* timeinfo;
+time(&rawtime);
+timeinfo = localtime(&rawtime);
+sprintf(buffer, "%04d-%02d-%02d %02d:%02d:%02d",
+(timeinfo->tm_year+1900), timeinfo->tm_mon, timeinfo->tm_mday,
+timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+}
+/*
+获得文件大小
+@param filename [in]: 文件名
+@return 文件大小
+*/
+long get_file_size(char* filename)
+{
+long length = 0;
+FILE *fp = NULL;
+fp = fopen(filename, "rb");
+if (fp != NULL)
+{
+fseek(fp, 0, SEEK_END);
+length = ftell(fp);
+}
+if (fp != NULL)
+{
+fclose(fp);
+fp = NULL;
+}
+return length;
+}
+/*
+写入日志文件
+@param filename [in]: 日志文件名
+@param max_size [in]: 日志文件大小限制
+@param buffer [in]: 日志内容
+@param buf_size [in]: 日志内容大小
+@return 空
+*/
+void write_log_file(char* filename,long max_size, char* buffer, unsigned buf_size)
+{
+if (filename != NULL && buffer != NULL)
+{
+// 文件超过最大限制, 删除
+long length = get_file_size(filename);
+if (length > max_size)
+{
+unlink(filename); // 删除文件
+}
+// 写日志
+{
+FILE *fp;
+fp = fopen(filename, "at+");
+if (fp != NULL)
+{
+char now[32];
+memset(now, 0, sizeof(now));
+get_local_time(now);
+fwrite(now, strlen(now)+1, 1, fp);
+fwrite(buffer, buf_size, 1, fp);
+fclose(fp);
+fp = NULL;
+}
+}
+}
+}
 
 /*
  * Module load callback
@@ -93,6 +182,13 @@ static void kafkaGetForeignRelSize(PlannerInfo *root, RelOptInfo *baserel, Oid f
 #endif
 
 
+    JavaVM *jvm;
+        jint res;
+    JNIEnv *env;
+
+   
+    char log_buffer[32];
+
 /*
  * Module load callback
  */
@@ -112,6 +208,35 @@ _PG_init(void)
 							 NULL,
 							 NULL,
 							 NULL);
+
+       DEBUGLOG("yannian001");
+
+   #ifdef JNI_VERSION_1_2
+    JavaVMInitArgs vm_args;
+    JavaVMOption options[1];
+    options[0].optionString ="-Djava.class.path=" USER_CLASSPATH;
+    vm_args.version = 0x00010002;
+    vm_args.options = options;
+    vm_args.nOptions = 1;
+    vm_args.ignoreUnrecognized = JNI_TRUE;
+ /* Create the Java VM */
+    res = JNI_CreateJavaVM(&jvm, (void**)&env, &vm_args);
+#else
+    JDK1_1InitArgs vm_args;
+    char classpath[1024];
+    vm_args.version = 0x00010001;
+    JNI_GetDefaultJavaVMInitArgs(&vm_args);
+    /* Append USER_CLASSPATH to the default system class path */
+    sprintf(classpath, "%s%c%s", vm_args.classpath, PATH_SEPARATOR, USER_CLASSPATH);
+    vm_args.classpath = classpath;
+    /* Create the Java VM */
+    res = JNI_CreateJavaVM(&jvm, &env, &vm_args);
+#endif /* JNI_VERSION_1_2 */
+memset(log_buffer, 0, sizeof(log_buffer));
+sprintf(log_buffer, " jvm\n");
+write_log_file("/tmp/log.txt", FILE_MAX_SIZE, log_buffer, strlen(log_buffer));
+
+
 }
 
 
@@ -1290,6 +1415,14 @@ kafkaBeginForeignModify(ModifyTableState *mtstate,
     festate->parse_options = parse_options;
     festate->attnumlist    = NIL;
 
+
+   jmethodID jni_mid;
+    festate->jni_cls = (*env)->FindClass(env, "cn/lucene/fmdb/LxJniApi");
+    jni_mid = (*env)->GetMethodID(env,festate->jni_cls,"<init>","()V"); 
+    festate->jni_obj=(*env)->NewObject(env,festate->jni_cls,jni_mid); 
+
+
+
     attnumlist  = (List *) list_nth(fdw_private, 0);
     n_params    = list_length(attnumlist);
     festate->out_functions = (FmgrInfo *) palloc0(sizeof(FmgrInfo) * n_params);
@@ -1421,6 +1554,22 @@ kafkaExecForeignInsert(EState *estate, ResultRelInfo *rinfo, TupleTableSlot *slo
     {
         KafkaWriteAttributes(festate, slot, festate->parse_options.format);
     }
+
+    jstring jni_jstr;
+    jmethodID jni_mid;
+    jstring line;
+    jni_jstr = (*env)->NewStringUTF(env, "test1");
+    jni_mid=(*env)->GetMethodID(env,festate->jni_cls,"readLine","(Ljava/lang/String;)Ljava/lang/String;");
+    line = (jstring)(*env)->CallObjectMethod(env,festate->jni_obj, jni_mid,jni_jstr);
+
+     char * cstr=Jstring2CStr(env,line);
+    memset(log_buffer, 0, sizeof(log_buffer));
+    sprintf(log_buffer, "%s \n", cstr);
+
+    write_log_file("/tmp/log.txt", FILE_MAX_SIZE, log_buffer, strlen(log_buffer));
+   
+
+
 
     /* fetch partition if given */
     value = slot_getattr(slot, festate->kafka_options.partition_attnum, &isnull);
